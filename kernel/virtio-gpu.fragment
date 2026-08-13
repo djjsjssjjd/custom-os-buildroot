@@ -1,0 +1,6 @@
+# Kernel fragment appended onto board/qemu/aarch64-virt/linux.config
+# (that base already enables DRM, DRM_VIRTIO_GPU, INPUT_EVDEV, VIRTIO_INPUT, FB)
+# Expose /dev/fb0 on top of the virtio-gpu DRM device so xf86-video-fbdev works.
+CONFIG_DRM_FBDEV_EMULATION=y
+# In-kernel WireGuard (wireguard-tools userspace is in the package set)
+CONFIG_WIREGUARD=y

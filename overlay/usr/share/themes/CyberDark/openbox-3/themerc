@@ -1,0 +1,18 @@
+# CyberDark — dark theme with neon-purple accents
+window.active.title.bg.color: #1a0b2e
+window.inactive.title.bg.color: #0d0714
+window.active.label.text.color: #c084fc
+window.inactive.label.text.color: #5b5170
+window.active.button.unpressed.image.color: #c084fc
+window.active.button.hover.image.color: #e9d5ff
+window.inactive.button.unpressed.image.color: #5b5170
+menu.title.bg.color: #1a0b2e
+menu.title.text.color: #c084fc
+menu.items.bg.color: #12081f
+menu.items.text.color: #a1a1b5
+menu.items.active.bg.color: #3b1d5e
+menu.items.active.text.color: #e9d5ff
+border.width: 1
+window.active.border.color: #7c3aed
+window.inactive.border.color: #2a2140
+menu.border.color: #7c3aed

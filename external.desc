@@ -1,0 +1,2 @@
+name: CUSTOM_OS
+desc: Custom ARM64 OS with X11/Xorg/Openbox (Buildroot external tree)

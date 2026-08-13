@@ -1,0 +1,3 @@
+# Openbox autostart — runs on session start
+xsetroot -solid '#1a0b2e' &
+xterm &
