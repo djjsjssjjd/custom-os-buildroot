@@ -1,0 +1,104 @@
+name: Build Custom OS (ARM64 + X11/Openbox)
+
+on:
+  workflow_dispatch:      # run from the GitHub web UI
+  push:
+    branches: [main]
+
+env:
+  BUILDROOT_VERSION: "2025.05"
+  DEFCONFIG: custom_os_defconfig
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Buildroot host dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc g++ make sed binutils patch gzip bzip2 \
+            perl tar cpio unzip rsync file bc wget python3 \
+            libncurses5-dev libncursesw5-dev xz-utils bison flex \
+            libssl-dev libelf-dev git ccache
+
+      # Only cache the source tarball dir, the download cache and ccache.
+      # The build tree (br-out) is intentionally NOT cached: Buildroot does not
+      # track overlay contents as make deps, so a restored output/ would serve
+      # stale rootfs images when only the overlay changes.
+      - name: Cache Buildroot source, downloads and ccache
+        uses: actions/cache@v4
+        with:
+          path: |
+            buildroot-src
+            dl-cache
+            ~/.buildroot-ccache
+          key: buildroot-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('configs/custom_os_defconfig', 'kernel/virtio-gpu.fragment', 'overlay/**') }}
+          restore-keys: |
+            buildroot-${{ env.BUILDROOT_VERSION }}-
+
+      - name: Download Buildroot ${{ env.BUILDROOT_VERSION }}
+        run: |
+          if [ ! -d buildroot-src/package ]; then
+            rm -rf buildroot-src   # drop any poisoned/partial cache entry
+            wget -q "https://buildroot.org/downloads/buildroot-${{ env.BUILDROOT_VERSION }}.tar.gz"
+            mkdir buildroot-src
+            tar xzf "buildroot-${{ env.BUILDROOT_VERSION }}.tar.gz" --strip-components=1 -C buildroot-src
+          fi
+          mkdir -p dl-cache
+          rm -rf buildroot-src/dl
+          ln -s "$GITHUB_WORKSPACE/dl-cache" buildroot-src/dl
+
+      # NOTE: this pipeline never merges/re-resolves config fragments in CI.
+      # configs/custom_os_defconfig is a fully resolved defconfig; kconfig
+      # expands all defaults/selects when the defconfig target loads it.
+      - name: Apply defconfig (out-of-tree)
+        working-directory: buildroot-src
+        run: make O="$GITHUB_WORKSPACE/br-out" BR2_EXTERNAL="$GITHUB_WORKSPACE" "$DEFCONFIG"
+
+      - name: Verify key packages resolved
+        run: |
+          set -e
+          for sym in BR2_PACKAGE_OPENBOX BR2_PACKAGE_XORG7 \
+                     BR2_PACKAGE_XSERVER_XORG_SERVER BR2_PACKAGE_XAPP_XINIT \
+                     BR2_PACKAGE_XTERM BR2_PACKAGE_XAPP_XSETROOT \
+                     BR2_PACKAGE_PCMANFM BR2_PACKAGE_DILLO BR2_PACKAGE_OPKG \
+                     BR2_PACKAGE_FEH BR2_PACKAGE_BASH BR2_PACKAGE_ZSH \
+                     BR2_PACKAGE_COREUTILS BR2_PACKAGE_WIREGUARD_TOOLS \
+                     BR2_PACKAGE_OPENSSH BR2_PACKAGE_NMAP BR2_PACKAGE_JQ \
+                     BR2_PACKAGE_GNUPG2 BR2_PACKAGE_PYTHON3 BR2_PACKAGE_PERL \
+                     BR2_PACKAGE_VALGRIND BR2_PACKAGE_IMAGEMAGICK; do
+            grep -q "^${sym}=y" br-out/.config || { echo "MISSING: $sym"; exit 1; }
+          done
+          ! grep -q "^BR2_PACKAGE_DROPBEAR=y" br-out/.config || { echo "dropbear must stay disabled (port 22 collision with openssh)"; exit 1; }
+          grep -q "^BR2_LEGACY=y" br-out/.config && { echo "legacy symbols present"; exit 1; } || true
+          echo "All key packages resolved, no legacy symbols."
+
+      - name: Build
+        run: make -C br-out -j"$(nproc)"
+
+      - name: Smoke test — boot kernel in QEMU and reach login prompt
+        run: |
+          timeout 180 br-out/host/bin/qemu-system-aarch64 \
+            -M virt -cpu cortex-a53 -m 512 -nographic \
+            -kernel br-out/images/Image \
+            -append "root=/dev/ram0 console=ttyAMA0" \
+            -initrd br-out/images/rootfs.cpio.gz 2>&1 | tee boot.log || true
+          grep -q "login:" boot.log && echo "BOOT OK" || { echo "BOOT FAILED"; exit 1; }
+
+      - name: Compress disk image
+        run: xz -T0 -k br-out/images/rootfs.ext2
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: custom-os-images
+          path: |
+            br-out/images/Image
+            br-out/images/rootfs.ext2.xz
+            br-out/images/rootfs.cpio.gz
+            br-out/images/rootfs.tar
+          if-no-files-found: error
