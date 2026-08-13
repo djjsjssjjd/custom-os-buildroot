@@ -1,0 +1,23 @@
+From: custom-os-buildroot
+Subject: [PATCH] cmCurl: fix build against curl 8.14 (CURL_NETRC_* are long macros now)
+
+curl 8.14 turned CURL_NETRC_IGNORED/OPTIONAL/REQUIRED into long #defines,
+so assigning them to a CURL_NETRC_OPTION enum is an invalid conversion in C++.
+Cast explicitly, matching the upstream CMake fix.
+
+--- a/Source/cmCurl.cxx
++++ b/Source/cmCurl.cxx
+@@ -175,11 +175,11 @@ std::string cmCurlSetNETRCOption(::CURL* curl, const std::string& netrc_level,
+   if (!netrc_level.empty()) {
+     if (netrc_level == "OPTIONAL") {
+-      curl_netrc_level = CURL_NETRC_OPTIONAL;
++      curl_netrc_level = static_cast<CURL_NETRC_OPTION>(CURL_NETRC_OPTIONAL);
+     } else if (netrc_level == "REQUIRED") {
+-      curl_netrc_level = CURL_NETRC_REQUIRED;
++      curl_netrc_level = static_cast<CURL_NETRC_OPTION>(CURL_NETRC_REQUIRED);
+     } else if (netrc_level == "IGNORED") {
+-      curl_netrc_level = CURL_NETRC_IGNORED;
++      curl_netrc_level = static_cast<CURL_NETRC_OPTION>(CURL_NETRC_IGNORED);
+     } else {
+       e = cmStrCat("NETRC accepts OPTIONAL, IGNORED or REQUIRED but got: ",
+                    netrc_level);
