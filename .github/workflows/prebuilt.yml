@@ -51,14 +51,8 @@ jobs:
           sudo tar xzf alpine-minirootfs-3.24.1-aarch64.tar.gz -C rootfs
 
       - name: Pre-bake Xorg/Openbox + kernel modules into rootfs
-        run: |
-    sudo ./sbin/apk.static --root rootfs --arch aarch64 --initdb --no-cache \
-  --allow-untrusted \
-  --keys-dir rootfs/etc/apk/keys \
-  -X https://dl-cdn.alpinelinux.org/alpine/latest-stable/main \
-  -X https://dl-cdn.alpinelinux.org/alpine/latest-stable/community \
-  add linux-virt xorg-server xinit openbox xterm \
-      xf86-video-fbdev xf86-input-evdev dbus eudev
+        run: sudo ./sbin/apk.static --root rootfs --arch aarch64 --initdb --no-cache --allow-untrusted --keys-dir rootfs/etc/apk/keys -X https://dl-cdn.alpinelinux.org/alpine/latest-stable/main -X https://dl-cdn.alpinelinux.org/alpine/latest-stable/community add linux-virt xorg-server xinit openbox xterm xf86-video-fbdev xf86-input-evdev dbus eudev
+
 
       - name: Configure rootfs (serial getty, DNS, xinitrc, xorg.conf, module autoload)
         run: |
