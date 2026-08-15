@@ -1,0 +1,37 @@
+name: Export ccache as artifact
+
+on:
+  workflow_dispatch:
+
+env:
+  BUILDROOT_VERSION: "2025.05"
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore Buildroot cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            dl-cache
+            ~/.buildroot-ccache
+          key: buildroot-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('configs/custom_os_defconfig', 'kernel/virtio-gpu.fragment', 'overlay/**') }}
+          restore-keys: |
+            buildroot-${{ env.BUILDROOT_VERSION }}-
+
+      - name: Pack ccache
+        run: |
+          du -sh ~/.buildroot-ccache || { echo "ccache dir missing"; exit 1; }
+          tar czf buildroot-ccache.tar.gz -C ~ .buildroot-ccache
+          ls -lh buildroot-ccache.tar.gz
+
+      - name: Upload ccache artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildroot-ccache
+          path: buildroot-ccache.tar.gz
+          if-no-files-found: error
