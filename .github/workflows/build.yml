@@ -77,6 +77,19 @@ jobs:
           grep -q "^BR2_LEGACY=y" br-out/.config && { echo "legacy symbols present"; exit 1; } || true
           echo "All key packages resolved, no legacy symbols."
 
+      # Fast pre-flight (~2 min): prove the cmake curl-8.14 patch is actually
+      # applied BEFORE burning an hour on the full build. Fails fast if not.
+      - name: Pre-flight — verify cmake patch is applied
+        run: |
+          echo "Checked-out commit: $(git rev-parse HEAD)"
+          grep -q "BR2_EXTERNAL_CUSTOM_OS_PATH)/patches" configs/custom_os_defconfig \
+            || { echo "FATAL: defconfig lacks the external patches dir — stale checkout?"; exit 1; }
+          make -C br-out cmake-patch 2>&1 | tail -3
+          f=br-out/build/cmake-3.31.5/Source/cmCurl.cxx
+          grep -q "static_cast<CURL_NETRC_OPTION>(CURL_NETRC_OPTIONAL)" "$f" \
+            || { echo "FATAL: cmake patch NOT applied. Offending lines:"; sed -n '176,183p' "$f"; exit 1; }
+          echo "cmake curl-8.14 patch verified in $f"
+
       - name: Build
         run: make -C br-out -j"$(nproc)"
 
