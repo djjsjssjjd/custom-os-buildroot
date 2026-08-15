@@ -1,0 +1,112 @@
+name: Prebuilt ARM64 Xorg image (no compile, no ISO)
+
+# Assembles a bootable ARM64 disk image from Alpine's PREBUILT pieces:
+#   - vmlinuz-virt + initramfs-virt  (prebuilt kernel + initramfs)
+#   - alpine-minirootfs tarball      (base userland)
+#   - apk.static                     (installs Xorg/Openbox + linux-virt modules
+#                                    into the rootfs WITHOUT chroot or compiling)
+# Output artifacts: rootfs.ext4.xz + vmlinuz-virt + initramfs-virt
+
+on:
+  workflow_dispatch:
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y e2fsprogs xz-utils python3 wget
+
+      - name: Download prebuilt kernel, initramfs and minirootfs
+        run: |
+          set -e
+          NB=https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/netboot
+          wget -q "$NB/vmlinuz-virt"
+          wget -q "$NB/initramfs-virt"
+          wget -q https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/alpine-minirootfs-3.24.1-aarch64.tar.gz
+          ls -lh vmlinuz-virt initramfs-virt alpine-minirootfs-*.tar.gz
+
+      - name: Fetch static apk (runs on x86_64 host, installs aarch64 packages)
+        run: |
+          set -e
+          VER=$(python3 - <<'PYEOF'
+          import tarfile, urllib.request, io, re
+          d = urllib.request.urlopen("https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/x86_64/APKINDEX.tar.gz").read()
+          i = tarfile.open(fileobj=io.BytesIO(d)).extractfile("APKINDEX").read().decode()
+          print(re.search(r"P:apk-tools-static\nV:([^\n]+)", i).group(1))
+          PYEOF
+          )
+          echo "apk-tools-static version: $VER"
+          wget -q "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/x86_64/apk-tools-static-${VER}.apk"
+          tar xzf "apk-tools-static-${VER}.apk"
+          ./sbin/apk.static --version
+
+      - name: Extract minirootfs
+        run: |
+          mkdir rootfs
+          sudo tar xzf alpine-minirootfs-3.24.1-aarch64.tar.gz -C rootfs
+
+      - name: Pre-bake Xorg/Openbox + kernel modules into rootfs
+        run: |
+          sudo ./sbin/apk.static --root rootfs --arch aarch64 --initdb --no-cache \
+            --keys-dir rootfs/etc/apk/keys \
+            -X https://dl-cdn.alpinelinux.org/alpine/latest-stable/main \
+            -X https://dl-cdn.alpinelinux.org/alpine/latest-stable/community \
+            add linux-virt xorg-server xinit openbox xterm \
+                xf86-video-fbdev xf86-input-evdev dbus eudev
+
+      - name: Configure rootfs (serial getty, DNS, xinitrc, xorg.conf, module autoload)
+        run: |
+          set -e
+          echo 'ttyAMA0::respawn:/sbin/getty -L 115200 ttyAMA0 vt100' | sudo tee -a rootfs/etc/inittab
+          echo 'nameserver 1.1.1.1' | sudo tee rootfs/etc/resolv.conf
+          echo 'exec openbox-session' | sudo tee rootfs/root/.xinitrc
+          sudo mkdir -p rootfs/etc/X11/xorg.conf.d
+          sudo tee rootfs/etc/X11/xorg.conf.d/10-virtio-gpu.conf <<'EOF'
+          Section "Device"
+            Identifier "virtio-gpu"
+            Driver "fbdev"
+          EndSection
+          EOF
+          sudo tee rootfs/etc/profile.d/10-virtio-x.sh <<'EOF'
+          # load display/input drivers + udev for X (runs on login)
+          modprobe virtio-gpu 2>/dev/null
+          modprobe virtio-input 2>/dev/null
+          pgrep udevd >/dev/null 2>&1 || udevd --daemon 2>/dev/null
+          udevadm trigger 2>/dev/null
+          EOF
+
+      - name: Build ext4 disk image
+        run: |
+          truncate -s 1536M rootfs.ext4
+          sudo mkfs.ext4 -q -d rootfs rootfs.ext4
+          ls -lh rootfs.ext4
+
+      - name: Compress image FIRST (so artifacts survive a smoke-test failure)
+        run: xz -T0 -k -3 rootfs.ext4
+
+      - name: Upload artifacts (image + kernel + initramfs)
+        uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: alpine-arm64-xorg-prebuilt
+          path: |
+            rootfs.ext4.xz
+            vmlinuz-virt
+            initramfs-virt
+          if-no-files-found: warn
+
+      - name: Smoke test boot (serial console, expect login prompt)
+        run: |
+          set -e
+          sudo apt-get install -y qemu-system-arm
+          timeout 180 sudo qemu-system-aarch64 -M virt -cpu cortex-a53 -m 1024 \
+            -kernel vmlinuz-virt -initrd initramfs-virt \
+            -append "root=/dev/vda rw console=ttyAMA0" \
+            -drive file=rootfs.ext4,if=virtio,format=raw -snapshot \
+            -nographic 2>&1 | tee boot.log || true
+          grep -q "login:" boot.log && echo "BOOT OK" || { echo "BOOT FAILED"; exit 1; }
